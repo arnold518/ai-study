@@ -36,7 +36,7 @@ $$
 - `K` : Number of epochs
 - `B` : Size of minibatch
 
-## 1.1.py
+## [`1.1.py`](1.1.py)
 
 Compares GD with SGD.
 
@@ -44,7 +44,7 @@ Note that 1 iteration of GD constitutes an epoch, while $N$ iterations of SGD co
 
 ![](1.1.1.png)
 
-## 1.2.py
+## [`1.2.py`](1.2.py)
 
 Compares SGD with minibatch SGD with/without replacement.
 
@@ -52,7 +52,7 @@ Note that $N$ iteration of SGD constitutes an epoch, while $N / B$ iterations of
 
 ![](1.2.1.png)
 
-## 1.3.py
+## [`1.3.py`](1.3.py)
 
 Compares SGD with cyclic SGD and shuffled cyclic SGD.
 
