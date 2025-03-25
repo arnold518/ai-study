@@ -3,7 +3,7 @@
 For the least squares problem
 
 $$
-\underset{\theta \in \mathbb{R}^{p}}{\mathop{\text{minimize}}} \frac{1}{2N}\|X\theta-Y\|^2
+\underset{\theta \in \mathbb{R}^{p}}{\mathrm{minimize}} \frac{1}{2N}\|X\theta-Y\|^2
 $$
 
 where $X\in \mathbb{R}^{N\times p}$ and $Y\in \mathbb{R}^N$.
