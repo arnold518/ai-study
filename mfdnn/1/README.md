@@ -3,9 +3,7 @@
 For the least squares problem
 
 $$
-\begin{array}{ll}
 \underset{\theta \in \mathbb{R}^{p}}{\mathop{\text{minimize}}} \frac{1}{2N}\|X\theta-Y\|^2
-\end{array}
 $$
 
 where $X\in \mathbb{R}^{N\times p}$ and $Y\in \mathbb{R}^N$.
@@ -25,7 +23,8 @@ $$
 Stochastic gradient descent (SGD) becomes
 
 $$
-i(k)\sim \mathrm{Uniform}(\{1,\dots,N\})\\
+i(k)\sim \mathrm{Uniform}(\{1,\dots,N\}) \\
+
 \theta^{k+1}=\theta^k-\alpha (X_{i(k)}^\intercal \theta^k-Y_{i(k)})X_{i(k)}
 $$
 
