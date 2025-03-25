@@ -23,7 +23,7 @@ $$
 Stochastic gradient descent (SGD) becomes
 
 $$
-i(k)\sim \mathrm{Uniform}(\{1,\dots,N\}) \\
+i(k)\sim \mathrm{Uniform}(\{1,\dots,N\}) \\\\
 
 \theta^{k+1}=\theta^k-\alpha (X_{i(k)}^\intercal \theta^k-Y_{i(k)})X_{i(k)}
 $$
