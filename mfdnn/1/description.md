@@ -4,7 +4,7 @@ For the least squares problem
 
 $$
 \begin{array}{ll}
-\underset{\theta \in \mathbb{R}^{p}}{\operatorname{minimize}} \frac{1}{2N}\|X\theta-Y\|^2
+\underset{\theta \in \mathbb{R}^{p}}{\mathop{\text{minimize}}} \frac{1}{2N}\|X\theta-Y\|^2
 \end{array}
 $$
 
