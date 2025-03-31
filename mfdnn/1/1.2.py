@@ -59,5 +59,5 @@ plt.plot(np.arange(K*N)/N, np.linalg.norm(X@np.linalg.inv(X.T@X)@X.T@Y-Y)**2*np.
 plt.xlabel('Epochs')
 plt.ylabel(r'$f(\theta^k)$')
 plt.legend()
-plt.savefig("1.2.1.png")
+plt.savefig("result/1.2.1.png")
 plt.show()
