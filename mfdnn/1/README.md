@@ -1,4 +1,4 @@
-# Examples of GD and SGD
+# Solving Least Squares Problem with GD and SGD
 
 For the least squares problem
 
