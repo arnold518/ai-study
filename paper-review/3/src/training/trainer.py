@@ -5,10 +5,12 @@ import torch.nn as nn
 from tqdm import tqdm
 import os
 import math
+import time
 
 from src.utils.checkpointing import save_checkpoint
 from src.utils.metrics import compute_bleu
 from src.inference.translator import Translator
+from src.utils.csv_logger import CSVLogger
 
 
 class Trainer:
@@ -36,13 +38,26 @@ class Trainer:
         self.config = config
         self.device = config.device
         self.best_val_loss = float('inf')
+        self.best_train_loss = float('inf')
         self.best_bleu = 0.0
         self.current_epoch = 0
+        self.global_step = 0
 
         # For BLEU computation and inference examples
         self.src_tokenizer = src_tokenizer
         self.tgt_tokenizer = tgt_tokenizer
         self.val_dataset = val_dataset
+
+        # Vocabulary sizes
+        self.src_vocab_size = src_tokenizer.vocab_size if src_tokenizer else None
+        self.tgt_vocab_size = tgt_tokenizer.vocab_size if tgt_tokenizer else None
+
+        # Dataset sizes
+        self.train_size = len(train_loader.dataset) if train_loader else None
+        self.val_size = len(val_loader.dataset) if val_loader else None
+
+        # Timing
+        self.cumulative_time = 0.0
 
         # Create translator if tokenizers available
         self.translator = None
@@ -55,10 +70,19 @@ class Trainer:
                 max_length=config.max_seq_length
             )
 
+        # Initialize CSV logger
+        log_dir = getattr(config, 'log_dir', 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        csv_path = os.path.join(log_dir, f'training_log_{timestamp}.csv')
+        self.csv_logger = CSVLogger(csv_path, config)
+        print(f"CSV logging enabled: {csv_path}")
+
     def train_epoch(self):
         """Train for one epoch."""
         self.model.train()
         total_loss = 0
+        total_grad_norm = 0
         num_batches = 0
 
         for batch in tqdm(self.train_loader, desc="Training"):
@@ -88,23 +112,27 @@ class Trainer:
             logits = logits.contiguous().view(-1, logits.size(-1))
             targets = tgt_output.contiguous().view(-1)
 
-            # Compute loss
+            # Compute loss (which is KL divergence with label smoothing)
             loss = self.criterion(logits, targets)
 
             # Backward pass
             self.optimizer.zero_grad()
             loss.backward()
 
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+            # Gradient clipping and tracking
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
 
             # Update weights and learning rate
             self.optimizer.step()
 
             total_loss += loss.item()
+            total_grad_norm += grad_norm.item()
             num_batches += 1
+            self.global_step += 1
 
-        return total_loss / num_batches
+        avg_loss = total_loss / num_batches
+        avg_grad_norm = total_grad_norm / num_batches
+        return avg_loss, avg_grad_norm
 
     def validate(self):
         """Validate the model."""
@@ -237,10 +265,15 @@ class Trainer:
 
         for epoch in range(self.config.num_epochs):
             self.current_epoch = epoch + 1
+            epoch_start_time = time.time()
 
             # Train
-            train_loss = self.train_epoch()
+            train_loss, train_grad_norm = self.train_epoch()
             train_ppl = math.exp(min(train_loss, 100))  # Cap to avoid overflow
+
+            # Track best training loss
+            if train_loss < self.best_train_loss:
+                self.best_train_loss = train_loss
 
             # Validate (if it's time)
             if (epoch + 1) % self.config.eval_every == 0:
@@ -270,9 +303,16 @@ class Trainer:
                             print(f"        Prediction: {pred}")
                             print()
 
+                # Track checkpoint information
+                checkpoint_path = ""
+                checkpoint_type = ""
+                is_best_loss = False
+                is_best_bleu = False
+
                 # Save best model (based on validation loss)
                 if val_loss < self.best_val_loss:
                     self.best_val_loss = val_loss
+                    is_best_loss = True
                     best_path = os.path.join(self.config.checkpoint_dir, 'best_model.pt')
                     save_checkpoint(
                         self.model,
@@ -281,11 +321,14 @@ class Trainer:
                         val_loss,
                         best_path
                     )
+                    checkpoint_path = best_path
+                    checkpoint_type = 'best_loss'
                     print(f"  -> New best model saved (Val Loss: {val_loss:.4f})!")
 
                 # Also save best BLEU model
                 if bleu_score is not None and bleu_score > self.best_bleu:
                     self.best_bleu = bleu_score
+                    is_best_bleu = True
                     best_bleu_path = os.path.join(self.config.checkpoint_dir, 'best_bleu_model.pt')
                     save_checkpoint(
                         self.model,
@@ -294,12 +337,76 @@ class Trainer:
                         val_loss,
                         best_bleu_path
                     )
+                    if checkpoint_type:
+                        checkpoint_type += ',best_bleu'
+                    else:
+                        checkpoint_type = 'best_bleu'
+                        checkpoint_path = best_bleu_path
                     print(f"  -> New best BLEU model saved (BLEU: {bleu_score:.2f})!")
 
+                # Compute epoch time
+                epoch_time = time.time() - epoch_start_time
+                self.cumulative_time += epoch_time
+
+                # Log to CSV
+                metrics = {
+                    'epoch': epoch + 1,
+                    'global_step': self.global_step,
+                    'train_loss': train_loss,
+                    'train_ppl': train_ppl,
+                    'train_kl_div': train_loss,  # Loss is KL divergence
+                    'val_loss': val_loss,
+                    'val_ppl': val_ppl,
+                    'val_kl_div': val_loss,  # Loss is KL divergence
+                    'val_bleu': bleu_score if bleu_score is not None else '',
+                    'learning_rate': self.optimizer._get_lr(),
+                    'grad_norm': train_grad_norm,
+                    'best_train_loss': self.best_train_loss,
+                    'best_val_loss': self.best_val_loss,
+                    'best_bleu': self.best_bleu,
+                    'is_best_loss': is_best_loss,
+                    'is_best_bleu': is_best_bleu,
+                    'checkpoint_path': checkpoint_path,
+                    'checkpoint_type': checkpoint_type,
+                    'src_vocab_size': self.src_vocab_size,
+                    'tgt_vocab_size': self.tgt_vocab_size,
+                    'train_size': self.train_size,
+                    'val_size': self.val_size,
+                    'epoch_time_seconds': epoch_time,
+                    'cumulative_time_seconds': self.cumulative_time,
+                }
+                self.csv_logger.log(metrics)
+
             else:
+                # No validation this epoch
                 print(f"\nEpoch {epoch+1}/{self.config.num_epochs}")
                 print(f"  Train Loss: {train_loss:.4f} | Train PPL: {train_ppl:.2f}")
                 print(f"  Learning Rate: {self.optimizer._get_lr():.6f}")
+
+                # Compute epoch time
+                epoch_time = time.time() - epoch_start_time
+                self.cumulative_time += epoch_time
+
+                # Log to CSV (without validation metrics)
+                metrics = {
+                    'epoch': epoch + 1,
+                    'global_step': self.global_step,
+                    'train_loss': train_loss,
+                    'train_ppl': train_ppl,
+                    'train_kl_div': train_loss,
+                    'learning_rate': self.optimizer._get_lr(),
+                    'grad_norm': train_grad_norm,
+                    'best_train_loss': self.best_train_loss,
+                    'best_val_loss': self.best_val_loss,
+                    'best_bleu': self.best_bleu,
+                    'src_vocab_size': self.src_vocab_size,
+                    'tgt_vocab_size': self.tgt_vocab_size,
+                    'train_size': self.train_size,
+                    'val_size': self.val_size,
+                    'epoch_time_seconds': epoch_time,
+                    'cumulative_time_seconds': self.cumulative_time,
+                }
+                self.csv_logger.log(metrics)
 
             # Save checkpoint periodically
             if (epoch + 1) % self.config.save_every == 0:
