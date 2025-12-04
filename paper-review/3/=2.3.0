@@ -1,0 +1,21 @@
+Collecting sacrebleu
+  Downloading sacrebleu-2.5.1-py3-none-any.whl.metadata (51 kB)
+Collecting portalocker (from sacrebleu)
+  Downloading portalocker-3.2.0-py3-none-any.whl.metadata (8.7 kB)
+Collecting regex (from sacrebleu)
+  Downloading regex-2025.11.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+Collecting tabulate>=0.8.9 (from sacrebleu)
+  Downloading tabulate-0.9.0-py3-none-any.whl.metadata (34 kB)
+Requirement already satisfied: numpy>=1.17 in /home/arnold/venv/lib/python3.13/site-packages (from sacrebleu) (2.2.5)
+Requirement already satisfied: colorama in /home/arnold/venv/lib/python3.13/site-packages (from sacrebleu) (0.4.6)
+Collecting lxml (from sacrebleu)
+  Downloading lxml-6.0.2-cp313-cp313-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl.metadata (3.6 kB)
+Downloading sacrebleu-2.5.1-py3-none-any.whl (104 kB)
+Downloading tabulate-0.9.0-py3-none-any.whl (35 kB)
+Downloading lxml-6.0.2-cp313-cp313-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl (5.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.2/5.2 MB 10.0 MB/s eta 0:00:00
+Downloading portalocker-3.2.0-py3-none-any.whl (22 kB)
+Downloading regex-2025.11.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (803 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 803.5/803.5 kB 9.4 MB/s eta 0:00:00
+Installing collected packages: tabulate, regex, portalocker, lxml, sacrebleu
+Successfully installed lxml-6.0.2 portalocker-3.2.0 regex-2025.11.3 sacrebleu-2.5.1 tabulate-0.9.0
