@@ -11,6 +11,7 @@ from src.utils.checkpointing import save_checkpoint
 from src.utils.metrics import compute_bleu
 from src.inference.translator import Translator
 from src.utils.csv_logger import CSVLogger
+from src.utils.checkpoint_cleanup import cleanup_checkpoints, should_cleanup
 
 
 class Trainer:
@@ -422,6 +423,24 @@ class Trainer:
                     checkpoint_path
                 )
                 print(f"  Checkpoint saved: {checkpoint_path}")
+
+                # Cleanup old checkpoints if needed
+                max_size = getattr(self.config, 'max_checkpoint_size_gb', None)
+                keep_n = getattr(self.config, 'keep_n_recent_checkpoints', 3)
+
+                if max_size is not None and should_cleanup(self.config.checkpoint_dir, max_size):
+                    print(f"\n  Cleaning up checkpoints (directory > {max_size:.1f} GB)...")
+                    cleanup_stats = cleanup_checkpoints(
+                        self.config.checkpoint_dir,
+                        max_size_gb=max_size,
+                        keep_n_recent=keep_n,
+                        dry_run=False,
+                        verbose=True
+                    )
+                    if cleanup_stats['deleted_files']:
+                        print(f"  ✓ Freed {cleanup_stats['freed_space_gb']:.2f} GB "
+                              f"({cleanup_stats['freed_space_percent']:.1f}%)")
+                        print(f"  ✓ Deleted {len(cleanup_stats['deleted_files'])} old checkpoint(s)")
 
                 # Show inference examples for periodic checkpoints too
                 if self.translator:

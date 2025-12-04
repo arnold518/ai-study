@@ -38,6 +38,8 @@ class BaseConfig:
     # Checkpointing
     save_every = 5
     eval_every = 1
+    max_checkpoint_size_gb = 10.0  # Maximum total size of checkpoint directory (GB)
+    keep_n_recent_checkpoints = 3  # Number of periodic checkpoints to keep
 
     # Evaluation
     bleu_num_samples = 100  # Number of validation samples for BLEU computation
