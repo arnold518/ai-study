@@ -50,8 +50,8 @@ class Translator:
         src_tokens = self.src_tokenizer.tokenize(src_sentence)
         src_ids = self.src_tokenizer.encode_ids(src_sentence)
 
-        # Add BOS token at the beginning
-        src_ids = [self.bos_idx] + src_ids
+        # Add BOS at beginning and EOS at end (match training format!)
+        src_ids = [self.src_tokenizer.bos_id] + src_ids + [self.src_tokenizer.eos_id]
 
         # Convert to tensor
         src = torch.tensor([src_ids], dtype=torch.long, device=self.device)  # [1, src_len]

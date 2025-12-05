@@ -11,9 +11,8 @@ class BaseConfig:
     datasets_to_download = ["moo", "tatoeba", "aihub"]  # Options: moo, tatoeba, aihub, all
 
     # Data Preprocessing (for split_data.py)
-    min_length = 1        # Minimum sentence length (words/tokens)
-    max_length = 150      # Maximum sentence length
-    length_ratio = 2.0    # Max length ratio between source and target (1.5 or 2.0)
+    min_length_chars = 1    # Minimum sentence length (characters, for initial check)
+    length_ratio = 3.5      # Max length ratio between source and target (relaxed from 2.0)
 
     # Vocabulary (for train_tokenizer.py)
     use_shared_vocab = True  # True: shared vocab for src/tgt, False: separate vocabs
@@ -22,32 +21,36 @@ class BaseConfig:
     spm_model_type = "unigram"  # Options: unigram, bpe, char, word
 
     # Training Data
-    max_seq_length = 128  # For model input (can be different from max_length)
+    max_seq_length = 128  # Maximum sequence length (TOKENS) for preprocessing AND model input
     min_freq = 2
 
     # Training
-    batch_size = 64
-    num_epochs = 100
-    learning_rate = 1e-4
+    batch_size = 128
+    num_epochs = 30        # Reduced from 100 (4.1x more data = fewer epochs needed)
+    learning_rate = 1e-4   # Not used (Transformer uses Noam scheduler)
     grad_clip = 1.0
 
     # Regularization
-    dropout = 0.1
+    dropout = 0.15         # Increased from 0.1 for larger dataset (1.7M samples)
     label_smoothing = 0.1
 
     # Checkpointing
     save_every = 5
     eval_every = 1
-    max_checkpoint_size_gb = 10.0  # Maximum total size of checkpoint directory (GB)
+    max_checkpoint_size_gb = 20.0  # Maximum total size of checkpoint directory (GB)
     keep_n_recent_checkpoints = 3  # Number of periodic checkpoints to keep
+
+    # Early Stopping (overfitting prevention)
+    early_stopping_patience = 8   # Stop if no improvement for N epochs
+    early_stopping_min_delta = 0.0001  # Minimum change to qualify as improvement
 
     # Evaluation
     bleu_num_samples = 100  # Number of validation samples for BLEU computation
     inference_num_examples = 2  # Number of inference examples to display
 
     # Device
-    device = "cpu"
-    num_workers = 4
+    device = "cuda"
+    num_workers = 8
 
     # Paths
     data_dir = "data"

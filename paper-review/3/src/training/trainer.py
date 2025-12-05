@@ -44,6 +44,11 @@ class Trainer:
         self.current_epoch = 0
         self.global_step = 0
 
+        # Early stopping
+        self.early_stopping_patience = getattr(config, 'early_stopping_patience', 8)
+        self.early_stopping_min_delta = getattr(config, 'early_stopping_min_delta', 0.0001)
+        self.epochs_without_improvement = 0
+
         # For BLEU computation and inference examples
         self.src_tokenizer = src_tokenizer
         self.tgt_tokenizer = tgt_tokenizer
@@ -311,9 +316,10 @@ class Trainer:
                 is_best_bleu = False
 
                 # Save best model (based on validation loss)
-                if val_loss < self.best_val_loss:
+                if val_loss < self.best_val_loss - self.early_stopping_min_delta:
                     self.best_val_loss = val_loss
                     is_best_loss = True
+                    self.epochs_without_improvement = 0  # Reset counter
                     best_path = os.path.join(self.config.checkpoint_dir, 'best_model.pt')
                     save_checkpoint(
                         self.model,
@@ -325,6 +331,9 @@ class Trainer:
                     checkpoint_path = best_path
                     checkpoint_type = 'best_loss'
                     print(f"  -> New best model saved (Val Loss: {val_loss:.4f})!")
+                else:
+                    self.epochs_without_improvement += 1
+                    print(f"  -> No improvement for {self.epochs_without_improvement} epoch(s) (patience: {self.early_stopping_patience})")
 
                 # Also save best BLEU model
                 if bleu_score is not None and bleu_score > self.best_bleu:
@@ -452,6 +461,17 @@ class Trainer:
                             print(f"        Reference:  {ref}")
                             print(f"        Prediction: {pred}")
                             print()
+
+            # Check early stopping
+            if self.epochs_without_improvement >= self.early_stopping_patience:
+                print(f"\n{'='*80}")
+                print(f"EARLY STOPPING TRIGGERED")
+                print(f"{'='*80}")
+                print(f"No improvement in validation loss for {self.epochs_without_improvement} epochs")
+                print(f"Best validation loss: {self.best_val_loss:.4f}")
+                print(f"Stopping training at epoch {epoch + 1}/{self.config.num_epochs}")
+                print(f"{'='*80}\n")
+                break
 
         print(f"\nTraining complete!")
         print(f"Best validation loss: {self.best_val_loss:.4f}")

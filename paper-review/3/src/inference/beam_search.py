@@ -1,10 +1,39 @@
-"""Beam search decoder with KV caching."""
+"""Beam search decoder with KV caching and repetition penalty."""
 
 import torch
 import torch.nn.functional as F
 from dataclasses import dataclass
 from typing import List
 from ..utils.masking import create_target_mask, create_cross_attention_mask
+
+
+def apply_repetition_penalty_beam(log_probs, tokens, penalty=1.2, window_size=20):
+    """
+    Apply repetition penalty to log probabilities in beam search.
+
+    Args:
+        log_probs: Log probabilities [vocab_size]
+        tokens: Previously generated tokens (list of ints)
+        penalty: Penalty factor (>1.0 = discourage repetition)
+        window_size: Number of recent tokens to penalize
+
+    Returns:
+        log_probs: Penalized log probabilities [vocab_size]
+    """
+    # Get recent tokens
+    recent_tokens = tokens[-window_size:] if len(tokens) > window_size else tokens
+
+    # Penalize each unique recent token
+    for token_id in set(recent_tokens):
+        # Skip special tokens (PAD=0, UNK=1, BOS=2, EOS=3)
+        if token_id < 4:
+            continue
+
+        # Apply penalty: subtract log(penalty) from log probability
+        # This is equivalent to dividing probability by penalty
+        log_probs[token_id] = log_probs[token_id] - torch.log(torch.tensor(penalty))
+
+    return log_probs
 
 
 @dataclass
@@ -93,6 +122,11 @@ def beam_search(model, src, src_mask, beam_size, max_length, bos_idx, eos_idx,
 
                 # Get log probabilities for next token
                 log_probs = F.log_softmax(logits[0, -1, :], dim=-1)  # [vocab_size]
+
+                # Apply repetition penalty to discourage loops
+                log_probs = apply_repetition_penalty_beam(
+                    log_probs, beam.tokens, penalty=1.2, window_size=20
+                )
 
                 # Get top-k tokens for this beam
                 topk_log_probs, topk_indices = torch.topk(log_probs, beam_size)

@@ -20,9 +20,9 @@ class TransformerConfig(BaseConfig):
     tie_embeddings = True        # Share weights between embeddings and output projection
     share_src_tgt_embed = True   # Share source and target embeddings (requires shared vocab)
 
-    # Training (from paper)
+    # Training (from paper, adjusted for 1.7M dataset)
     learning_rate = 1.0    # Will use custom scheduler with warmup
-    warmup_steps = 4000
+    warmup_steps = 16000   # Scaled from 4000 for 4.1x larger dataset (~1.2 epochs)
     adam_beta1 = 0.9
     adam_beta2 = 0.98
     adam_eps = 1e-9

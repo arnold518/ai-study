@@ -25,6 +25,7 @@ from collections import defaultdict
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from config.base_config import BaseConfig
+from src.data.tokenizer import SentencePieceTokenizer
 
 
 def load_parallel_data(ko_path, en_path):
@@ -41,20 +42,27 @@ def load_parallel_data(ko_path, en_path):
     return ko_lines, en_lines
 
 
-def clean_and_filter(ko_lines, en_lines, min_len=3, max_len=150, max_ratio=3.0):
+def clean_and_filter(ko_lines, en_lines, min_len_chars=1, max_seq_len_tokens=128, max_ratio=3.5):
     """
-    Clean and filter sentence pairs.
+    Clean and filter sentence pairs using TOKEN-BASED filtering.
 
     Args:
         ko_lines: List of Korean sentences
         en_lines: List of English sentences
-        min_len: Minimum sentence length (characters)
-        max_len: Maximum sentence length (characters)
+        min_len_chars: Minimum sentence length (characters, for quick filter)
+        max_seq_len_tokens: Maximum sequence length (TOKENS including BOS/EOS)
         max_ratio: Maximum length ratio between source and target
 
     Returns:
         Filtered lists of Korean and English sentences, and statistics
     """
+    # Load tokenizers (trained on data/vocab/)
+    script_dir = Path(__file__).parent
+    vocab_dir = script_dir.parent / "data/vocab"
+
+    ko_tokenizer = SentencePieceTokenizer(str(vocab_dir / "ko_spm.model"))
+    en_tokenizer = SentencePieceTokenizer(str(vocab_dir / "en_spm.model"))
+
     filtered_ko = []
     filtered_en = []
 
@@ -62,7 +70,7 @@ def clean_and_filter(ko_lines, en_lines, min_len=3, max_len=150, max_ratio=3.0):
         'total': len(ko_lines),
         'empty': 0,
         'too_short': 0,
-        'too_long': 0,
+        'too_long_tokens': 0,
         'ratio_mismatch': 0,
         'kept': 0
     }
@@ -73,18 +81,26 @@ def clean_and_filter(ko_lines, en_lines, min_len=3, max_len=150, max_ratio=3.0):
             stats['empty'] += 1
             continue
 
-        # Skip too short sentences
-        if len(ko) < min_len or len(en) < min_len:
+        # Skip very short sentences (character-based quick filter)
+        if len(ko) < min_len_chars or len(en) < min_len_chars:
             stats['too_short'] += 1
             continue
 
-        # Skip too long sentences
-        if len(ko) > max_len or len(en) > max_len:
-            stats['too_long'] += 1
+        # TOKEN-BASED filtering (the key change!)
+        # Tokenize and check length (including BOS/EOS tokens)
+        ko_tokens = ko_tokenizer.encode_ids(ko)
+        en_tokens = en_tokenizer.encode_ids(en)
+
+        ko_token_len = len(ko_tokens) + 2  # +2 for BOS/EOS
+        en_token_len = len(en_tokens) + 2
+
+        # Skip if tokenized sequence exceeds max_seq_length
+        if ko_token_len > max_seq_len_tokens or en_token_len > max_seq_len_tokens:
+            stats['too_long_tokens'] += 1
             continue
 
-        # Skip if length ratio is too high (likely misaligned)
-        ratio = max(len(ko), len(en)) / min(len(ko), len(en))
+        # Skip if token length ratio is too high (likely misaligned)
+        ratio = max(ko_token_len, en_token_len) / min(ko_token_len, en_token_len)
         if ratio > max_ratio:
             stats['ratio_mismatch'] += 1
             continue
@@ -138,14 +154,16 @@ def load_datasets_from_raw(raw_dir):
     return datasets_by_split
 
 
-def merge_and_process_split(split_name, datasets, min_len, max_len, max_ratio):
+def merge_and_process_split(split_name, datasets, min_len_chars, max_seq_len_tokens, max_ratio):
     """
     Merge multiple datasets for a split and apply filtering.
 
     Args:
         split_name: 'train', 'validation', or 'test'
         datasets: List of (dataset_name, ko_lines, en_lines) tuples
-        min_len, max_len, max_ratio: Filtering parameters
+        min_len_chars: Minimum character length
+        max_seq_len_tokens: Maximum token length
+        max_ratio: Maximum length ratio
 
     Returns:
         Merged and filtered ko/en lines, plus statistics
@@ -173,15 +191,15 @@ def merge_and_process_split(split_name, datasets, min_len, max_len, max_ratio):
     print(f"\nTotal before filtering: {len(merged_ko):,} pairs")
 
     # Apply filtering
-    print("Applying filters...")
+    print("Applying TOKEN-BASED filters...")
     filtered_ko, filtered_en, filter_stats = clean_and_filter(
-        merged_ko, merged_en, min_len, max_len, max_ratio
+        merged_ko, merged_en, min_len_chars, max_seq_len_tokens, max_ratio
     )
 
     print(f"\nFiltering results:")
     print(f"  - Empty: {filter_stats['empty']:,}")
-    print(f"  - Too short: {filter_stats['too_short']:,}")
-    print(f"  - Too long: {filter_stats['too_long']:,}")
+    print(f"  - Too short (chars): {filter_stats['too_short']:,}")
+    print(f"  - Too long (tokens): {filter_stats['too_long_tokens']:,}")
     print(f"  - Length ratio mismatch: {filter_stats['ratio_mismatch']:,}")
     print(f"  - Kept: {filter_stats['kept']:,} ({100*filter_stats['kept']/filter_stats['total']:.1f}%)")
 
@@ -237,9 +255,9 @@ def main():
     print("Korean-English Data Merging and Preprocessing")
     print("=" * 60)
     print()
-    print(f"Configuration:")
-    print(f"  Min length: {config.min_length}")
-    print(f"  Max length: {config.max_length}")
+    print(f"Configuration (TOKEN-BASED FILTERING):")
+    print(f"  Min length (chars): {config.min_length_chars}")
+    print(f"  Max seq length (tokens): {config.max_seq_length}")
     print(f"  Max ratio: {config.length_ratio}")
     print()
 
@@ -269,17 +287,14 @@ def main():
             print(f"No datasets available for {split} split")
             continue
 
-        # Use more lenient settings for validation/test
-        if split in ['validation', 'test']:
-            min_len, max_len, max_ratio = 1, 300, 5.0
-        else:
-            min_len = config.min_length
-            max_len = config.max_length
-            max_ratio = config.length_ratio
+        # Use SAME filtering for all splits (fix validation/test mismatch!)
+        min_len_chars = config.min_length_chars
+        max_seq_len_tokens = config.max_seq_length
+        max_ratio = config.length_ratio
 
         # Merge and process
         ko_lines, en_lines, stats = merge_and_process_split(
-            split, datasets_by_split[split], min_len, max_len, max_ratio
+            split, datasets_by_split[split], min_len_chars, max_seq_len_tokens, max_ratio
         )
 
         if ko_lines and en_lines:

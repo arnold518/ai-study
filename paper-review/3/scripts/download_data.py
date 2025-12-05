@@ -15,6 +15,7 @@ Usage:
 
 import os
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # Add parent directory to path
@@ -123,11 +124,12 @@ def download_tatoeba_dataset(raw_dir):
         print(f"\n✗ Error downloading Tatoeba dataset: {e}")
         return False
 
-
 def download_aihub_dataset(raw_dir):
     """Download AI Hub dataset via Korpora."""
     try:
         from Korpora import Korpora
+        if not hasattr(ET.ElementTree, "getiterator"):
+            ET.ElementTree.getiterator = ET.ElementTree.iter
     except ImportError:
         print("Error: 'Korpora' library not found.")
         print("Please install it: pip install Korpora")
