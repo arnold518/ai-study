@@ -34,10 +34,9 @@ class PositionWiseFeedForward(nn.Module):
         # ReLU activation
         x = F.relu(x)
 
-        # Dropout after activation
-        x = self.dropout(x)
-
         # Second linear transformation: d_ff -> d_model
+        # Note: Dropout is applied OUTSIDE the FFN (in encoder/decoder layers)
+        # to match the paper specification: "dropout to the output of each sub-layer"
         x = self.linear2(x)
 
         return x

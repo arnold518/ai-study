@@ -18,16 +18,25 @@ class TransformerConfig(BaseConfig):
 
     # Embedding and weight tying (Section 3.4 of paper)
     tie_embeddings = True        # Share weights between embeddings and output projection
-    share_src_tgt_embed = True   # Share source and target embeddings (requires shared vocab)
+    share_src_tgt_embed = False  # Separate embeddings for Korean-English (linguistically distant)
 
-    # Training (from paper, adjusted for 1.7M dataset)
-    learning_rate = 1.0    # Will use custom scheduler with warmup
-    warmup_steps = 16000   # Scaled from 4000 for 4.1x larger dataset (~1.2 epochs)
+    # Training (from paper, adjusted for 897k dataset)
+    learning_rate = 2.0    # Factor in Noam schedule (higher for smaller dataset)
+    warmup_steps = 4000    # Paper default, appropriate for 897k dataset
     adam_beta1 = 0.9
     adam_beta2 = 0.98
     adam_eps = 1e-9
 
     # Inference
-    beam_size = 4
+    beam_size = 8             # Increased from 4 for diverse beam search
     length_penalty = 0.6
     max_decode_length = 150
+
+    # Diverse Beam Search (Vijayakumar et al., 2018)
+    use_diverse_beam_search = True  # Enable diverse beam groups
+    num_beam_groups = 4       # Divide beams into groups (must divide beam_size evenly)
+    diversity_penalty = 0.5   # Penalty for selecting same token as previous groups
+
+    # Repetition control
+    repetition_penalty = 1.5  # Increased from 1.2 (higher = stronger penalty)
+    repetition_window = 30    # Increased from 20 (longer memory)

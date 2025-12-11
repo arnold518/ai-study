@@ -43,15 +43,19 @@ class PositionalEncoding(nn.Module):
         # Register as buffer (not a parameter, won't be trained)
         self.register_buffer('pe', pe)
 
-    def forward(self, x):
+    def forward(self, x, position_offset=0):
         """
         Args:
             x: Input embeddings [batch_size, seq_len, d_model]
+            position_offset: Starting position index for positional encoding (for cached decoding)
+                           Default 0 means start from position 0 (for training/non-cached inference)
 
         Returns:
             output: [batch_size, seq_len, d_model]
         """
         # Add positional encoding to input
         # pe is [1, max_len, d_model], slice to match input sequence length
-        x = x + self.pe[:, :x.size(1)]
+        # For cached decoding, we need to offset by the number of already-cached tokens
+        seq_len = x.size(1)
+        x = x + self.pe[:, position_offset:position_offset + seq_len]
         return self.dropout(x)

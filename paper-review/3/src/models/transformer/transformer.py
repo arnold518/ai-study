@@ -201,9 +201,18 @@ class Transformer(nn.Module):
             logits: Output logits [batch_size, tgt_len, tgt_vocab_size]
             new_layer_caches: Updated caches for all decoder layers
         """
-        # Embedding + positional encoding
+        # Calculate position offset based on cache
+        # If no cache, position starts at 0
+        # If cache exists, position = number of tokens already cached
+        if layer_caches is None:
+            position_offset = 0
+        else:
+            # Get cached sequence length from first layer's self-attention cache
+            position_offset = layer_caches[0]['self_attn']['key'].size(1)
+
+        # Embedding + positional encoding with correct position offset
         tgt_embedded = self.tgt_embed(tgt) * self.embed_scale
-        tgt_encoded = self.pos_encoding(tgt_embedded)
+        tgt_encoded = self.pos_encoding(tgt_embedded, position_offset=position_offset)
 
         # Decode with caching
         decoder_output, new_layer_caches = self.decoder(

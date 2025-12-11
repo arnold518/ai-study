@@ -2,10 +2,12 @@
 
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 import os
 import math
 import time
+from collections import defaultdict
 
 from src.utils.checkpointing import save_checkpoint
 from src.utils.metrics import compute_bleu
@@ -84,14 +86,157 @@ class Trainer:
         self.csv_logger = CSVLogger(csv_path, config)
         print(f"CSV logging enabled: {csv_path}")
 
+        # Mixed Precision Training
+        self.use_mixed_precision = getattr(config, 'use_mixed_precision', False)
+        self.scaler = GradScaler() if self.use_mixed_precision else None
+        if self.use_mixed_precision:
+            print("✓ Mixed precision training enabled (AMP)")
+
+        # Gradient Monitoring
+        self.monitor_gradients = getattr(config, 'monitor_gradients', False)
+        self.gradient_stats = {
+            'layer_norms': defaultdict(list),
+            'anomalies': {'nan': 0, 'inf': 0, 'vanishing': 0, 'exploding': 0}
+        }
+        if self.monitor_gradients:
+            print("✓ Gradient monitoring enabled")
+
+    def compute_gradient_stats(self):
+        """
+        Compute detailed gradient statistics for monitoring.
+
+        Returns:
+            stats: Dictionary with gradient statistics
+        """
+        total_norm = 0.0
+        layer_norms = {}
+        param_stats = []
+
+        for name, param in self.model.named_parameters():
+            if param.grad is not None:
+                # Compute norm for this parameter
+                param_norm = param.grad.data.norm(2).item()
+                layer_norms[name] = param_norm
+                total_norm += param_norm ** 2
+
+                # Compute statistics
+                grad_data = param.grad.data
+                param_stats.append({
+                    'name': name,
+                    'norm': param_norm,
+                    'mean': grad_data.mean().item(),
+                    'std': grad_data.std().item(),
+                    'min': grad_data.min().item(),
+                    'max': grad_data.max().item(),
+                    'has_nan': torch.isnan(grad_data).any().item(),
+                    'has_inf': torch.isinf(grad_data).any().item()
+                })
+
+        total_norm = total_norm ** 0.5
+
+        return {
+            'total_norm': total_norm,
+            'layer_norms': layer_norms,
+            'param_stats': param_stats
+        }
+
+    def check_gradient_anomalies(self, grad_stats, vanishing_threshold=1e-6, exploding_threshold=100.0):
+        """
+        Check for gradient anomalies (NaN, Inf, vanishing, exploding).
+
+        Args:
+            grad_stats: Gradient statistics from compute_gradient_stats()
+            vanishing_threshold: Threshold for vanishing gradients
+            exploding_threshold: Threshold for exploding gradients
+
+        Returns:
+            anomalies: Dictionary with anomaly counts
+        """
+        anomalies = {
+            'nan': 0,
+            'inf': 0,
+            'vanishing': 0,
+            'exploding': 0,
+            'details': []
+        }
+
+        for param_stat in grad_stats['param_stats']:
+            # Check for NaN
+            if param_stat['has_nan']:
+                anomalies['nan'] += 1
+                anomalies['details'].append(f"NaN in {param_stat['name']}")
+
+            # Check for Inf
+            if param_stat['has_inf']:
+                anomalies['inf'] += 1
+                anomalies['details'].append(f"Inf in {param_stat['name']}")
+
+            # Check for vanishing gradients
+            if param_stat['norm'] < vanishing_threshold:
+                anomalies['vanishing'] += 1
+                anomalies['details'].append(f"Vanishing gradient in {param_stat['name']} (norm={param_stat['norm']:.2e})")
+
+            # Check for exploding gradients
+            if param_stat['norm'] > exploding_threshold:
+                anomalies['exploding'] += 1
+                anomalies['details'].append(f"Exploding gradient in {param_stat['name']} (norm={param_stat['norm']:.2e})")
+
+        return anomalies
+
+    def print_gradient_stats(self, grad_stats, anomalies=None, top_n=5):
+        """
+        Print gradient statistics.
+
+        Args:
+            grad_stats: Gradient statistics from compute_gradient_stats()
+            anomalies: Optional anomaly information
+            top_n: Number of top layers to show
+        """
+        print(f"\n  Gradient Statistics:")
+        print(f"    Total Norm: {grad_stats['total_norm']:.4f}")
+
+        # Sort layers by norm
+        sorted_layers = sorted(grad_stats['layer_norms'].items(), key=lambda x: x[1], reverse=True)
+
+        print(f"    Top {top_n} layers by gradient norm:")
+        for name, norm in sorted_layers[:top_n]:
+            print(f"      {name}: {norm:.4f}")
+
+        # Print anomalies if any
+        if anomalies:
+            total_anomalies = sum(anomalies[k] for k in ['nan', 'inf', 'vanishing', 'exploding'])
+            if total_anomalies > 0:
+                print(f"\n    ⚠️  Gradient Anomalies Detected:")
+                if anomalies['nan'] > 0:
+                    print(f"      NaN: {anomalies['nan']} parameters")
+                if anomalies['inf'] > 0:
+                    print(f"      Inf: {anomalies['inf']} parameters")
+                if anomalies['vanishing'] > 0:
+                    print(f"      Vanishing: {anomalies['vanishing']} parameters")
+                if anomalies['exploding'] > 0:
+                    print(f"      Exploding: {anomalies['exploding']} parameters")
+
+                # Print details for critical anomalies
+                critical = [d for d in anomalies['details'] if 'NaN' in d or 'Inf' in d]
+                if critical:
+                    print(f"\n    Critical Issues:")
+                    for detail in critical[:3]:  # Show first 3
+                        print(f"      - {detail}")
+
     def train_epoch(self):
-        """Train for one epoch."""
+        """Train for one epoch with gradient accumulation support."""
         self.model.train()
         total_loss = 0
         total_grad_norm = 0
         num_batches = 0
 
-        for batch in tqdm(self.train_loader, desc="Training"):
+        # Get gradient accumulation steps from config
+        accumulation_steps = getattr(self.config, 'gradient_accumulation_steps', 1)
+
+        # Zero gradients at start
+        self.optimizer.zero_grad()
+
+        for batch_idx, batch in enumerate(tqdm(self.train_loader, desc="Training")):
             # Move batch to device
             src = batch['src'].to(self.device)
             tgt = batch['tgt'].to(self.device)
@@ -109,35 +254,90 @@ class Trainer:
             tgt_input_mask = tgt_mask[:, :, :-1, :-1]
             cross_input_mask = cross_mask[:, :, :-1, :]
 
-            # Forward pass
-            logits = self.model(src, tgt_input, src_mask, tgt_input_mask, cross_input_mask)
+            # Forward pass with mixed precision
+            with autocast(enabled=self.use_mixed_precision):
+                logits = self.model(src, tgt_input, src_mask, tgt_input_mask, cross_input_mask)
 
-            # Reshape for loss computation
-            # logits: [batch, seq_len, vocab_size] -> [batch * seq_len, vocab_size]
-            # targets: [batch, seq_len] -> [batch * seq_len]
-            logits = logits.contiguous().view(-1, logits.size(-1))
-            targets = tgt_output.contiguous().view(-1)
+                # Reshape for loss computation
+                # logits: [batch, seq_len, vocab_size] -> [batch * seq_len, vocab_size]
+                # targets: [batch, seq_len] -> [batch * seq_len]
+                logits = logits.contiguous().view(-1, logits.size(-1))
+                targets = tgt_output.contiguous().view(-1)
 
-            # Compute loss (which is KL divergence with label smoothing)
-            loss = self.criterion(logits, targets)
+                # Compute loss (which is KL divergence with label smoothing)
+                loss = self.criterion(logits, targets)
 
-            # Backward pass
-            self.optimizer.zero_grad()
-            loss.backward()
+                # Scale loss by accumulation steps (important for correct gradient magnitude)
+                loss = loss / accumulation_steps
 
-            # Gradient clipping and tracking
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+            # Backward pass (accumulate gradients) with gradient scaling
+            if self.use_mixed_precision:
+                self.scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
-            # Update weights and learning rate
-            self.optimizer.step()
+            # Update weights every accumulation_steps batches
+            if (batch_idx + 1) % accumulation_steps == 0:
+                if self.use_mixed_precision:
+                    # Unscale gradients before clipping (required for AMP)
+                    self.scaler.unscale_(self.optimizer)
 
-            total_loss += loss.item()
-            total_grad_norm += grad_norm.item()
+                # Gradient clipping and tracking
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+                total_grad_norm += grad_norm.item()
+
+                # Detailed gradient monitoring (optional, every N steps)
+                if self.monitor_gradients and self.global_step % 100 == 0:
+                    grad_stats = self.compute_gradient_stats()
+                    anomalies = self.check_gradient_anomalies(grad_stats)
+
+                    # Track anomalies
+                    for key in ['nan', 'inf', 'vanishing', 'exploding']:
+                        self.gradient_stats['anomalies'][key] += anomalies[key]
+
+                    # Print if anomalies detected
+                    total_anomalies = sum(anomalies[k] for k in ['nan', 'inf', 'vanishing', 'exploding'])
+                    if total_anomalies > 0:
+                        print(f"\n  [Step {self.global_step}] Gradient anomalies detected:")
+                        self.print_gradient_stats(grad_stats, anomalies, top_n=3)
+
+                # Update weights and learning rate
+                if self.use_mixed_precision:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
+
+                # Zero gradients for next accumulation cycle
+                self.optimizer.zero_grad()
+
+                self.global_step += 1
+
+            # Track loss (multiply back by accumulation_steps for correct reporting)
+            total_loss += loss.item() * accumulation_steps
             num_batches += 1
+
+        # Handle remaining gradients if batch count not divisible by accumulation_steps
+        if num_batches % accumulation_steps != 0:
+            if self.use_mixed_precision:
+                self.scaler.unscale_(self.optimizer)
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+            total_grad_norm += grad_norm.item()
+
+            if self.use_mixed_precision:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                self.optimizer.step()
+
+            self.optimizer.zero_grad()
             self.global_step += 1
 
         avg_loss = total_loss / num_batches
-        avg_grad_norm = total_grad_norm / num_batches
+        # Divide by number of actual optimizer steps, not batches
+        num_optimizer_steps = (num_batches + accumulation_steps - 1) // accumulation_steps
+        avg_grad_norm = total_grad_norm / num_optimizer_steps if num_optimizer_steps > 0 else 0
         return avg_loss, avg_grad_norm
 
     def validate(self):

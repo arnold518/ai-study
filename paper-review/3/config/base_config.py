@@ -15,23 +15,24 @@ class BaseConfig:
     length_ratio = 3.5      # Max length ratio between source and target (relaxed from 2.0)
 
     # Vocabulary (for train_tokenizer.py)
-    use_shared_vocab = True  # True: shared vocab for src/tgt, False: separate vocabs
+    use_shared_vocab = False  # False: separate vocabs for Korean/English (better for distant languages)
     vocab_size = 16000        # Size per language (or total if shared)
     character_coverage = 0.9995  # For SentencePiece (0.9995 for Korean, 1.0 for English)
     spm_model_type = "unigram"  # Options: unigram, bpe, char, word
 
     # Training Data
-    max_seq_length = 128  # Maximum sequence length (TOKENS) for preprocessing AND model input
+    max_seq_length = 150  # Maximum sequence length (TOKENS) - increased for longer Korean sentences
     min_freq = 2
 
     # Training
     batch_size = 128
+    gradient_accumulation_steps = 2  # Effective batch size = 128 * 2 = 256
     num_epochs = 30        # Reduced from 100 (4.1x more data = fewer epochs needed)
     learning_rate = 1e-4   # Not used (Transformer uses Noam scheduler)
     grad_clip = 1.0
 
     # Regularization
-    dropout = 0.15         # Increased from 0.1 for larger dataset (1.7M samples)
+    dropout = 0.1          # Match paper (after fixing double dropout bug)
     label_smoothing = 0.1
 
     # Checkpointing
@@ -51,6 +52,12 @@ class BaseConfig:
     # Device
     device = "cuda"
     num_workers = 8
+
+    # Mixed Precision Training (Automatic Mixed Precision)
+    use_mixed_precision = True  # Enable AMP for 2-3x speedup and 40% memory savings
+
+    # Gradient Monitoring (for debugging training issues)
+    monitor_gradients = False  # Enable detailed gradient statistics and anomaly detection
 
     # Paths
     data_dir = "data"

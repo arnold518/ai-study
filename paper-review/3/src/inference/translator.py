@@ -33,15 +33,22 @@ class Translator:
         self.model.to(device)
         self.model.eval()
 
-    def translate(self, src_sentence, method='greedy', beam_size=4, length_penalty=0.6):
+    def translate(self, src_sentence, method='greedy', beam_size=8, length_penalty=0.6,
+                  repetition_penalty=1.5, repetition_window=30,
+                  use_diverse_beam_search=True, num_beam_groups=4, diversity_penalty=0.5):
         """
         Translate a source sentence.
 
         Args:
             src_sentence: Source sentence (string)
             method: Decoding method ('greedy' or 'beam')
-            beam_size: Beam size for beam search (ignored for greedy)
-            length_penalty: Length penalty for beam search (ignored for greedy)
+            beam_size: Beam size for beam search (default: 8, ignored for greedy)
+            length_penalty: Length penalty for beam search (default: 0.6, ignored for greedy)
+            repetition_penalty: Penalty for repeated tokens (default: 1.5)
+            repetition_window: Window size for tracking repetitions (default: 30)
+            use_diverse_beam_search: Enable diverse beam groups (default: True, ignored for greedy)
+            num_beam_groups: Number of beam groups (default: 4, ignored if not using diverse beams)
+            diversity_penalty: Diversity penalty (default: 0.5, ignored if not using diverse beams)
 
         Returns:
             translation: Translated sentence (string)
@@ -68,7 +75,9 @@ class Translator:
                 max_length=self.max_length,
                 bos_idx=self.bos_idx,
                 eos_idx=self.eos_idx,
-                device=self.device
+                device=self.device,
+                repetition_penalty=repetition_penalty,
+                repetition_window=repetition_window
             )
         elif method == 'beam':
             output = beam_search(
@@ -80,6 +89,11 @@ class Translator:
                 bos_idx=self.bos_idx,
                 eos_idx=self.eos_idx,
                 length_penalty=length_penalty,
+                repetition_penalty=repetition_penalty,
+                repetition_window=repetition_window,
+                use_diverse_beam_search=use_diverse_beam_search,
+                num_beam_groups=num_beam_groups,
+                diversity_penalty=diversity_penalty,
                 device=self.device
             )
         else:

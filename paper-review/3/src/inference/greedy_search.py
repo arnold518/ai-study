@@ -40,7 +40,8 @@ def apply_repetition_penalty(logits, generated_ids, penalty=1.2, window_size=20)
     return logits
 
 
-def greedy_decode(model, src, src_mask, max_length, bos_idx, eos_idx, device):
+def greedy_decode(model, src, src_mask, max_length, bos_idx, eos_idx, device,
+                  repetition_penalty=1.5, repetition_window=30):
     """
     Greedy decoding: select highest probability token at each step.
 
@@ -55,6 +56,8 @@ def greedy_decode(model, src, src_mask, max_length, bos_idx, eos_idx, device):
         bos_idx: Beginning-of-sequence token index
         eos_idx: End-of-sequence token index
         device: Device to run on
+        repetition_penalty: Penalty factor for repeated tokens (default: 1.5)
+        repetition_window: Window size for tracking repetitions (default: 30)
 
     Returns:
         output: Decoded sequence [batch_size, out_len]
@@ -88,7 +91,7 @@ def greedy_decode(model, src, src_mask, max_length, bos_idx, eos_idx, device):
 
             # Apply repetition penalty to discourage loops
             next_token_logits = apply_repetition_penalty(
-                next_token_logits, tgt, penalty=1.2, window_size=20
+                next_token_logits, tgt, penalty=repetition_penalty, window_size=repetition_window
             )
 
             next_token = next_token_logits.argmax(dim=-1)  # [batch_size]
@@ -109,7 +112,8 @@ def greedy_decode(model, src, src_mask, max_length, bos_idx, eos_idx, device):
         return tgt
 
 
-def greedy_decode_cached(model, src, src_mask, max_length, bos_idx, eos_idx, device):
+def greedy_decode_cached(model, src, src_mask, max_length, bos_idx, eos_idx, device,
+                         repetition_penalty=1.5, repetition_window=30):
     """
     Greedy decoding with KV caching for efficient inference.
 
@@ -124,6 +128,8 @@ def greedy_decode_cached(model, src, src_mask, max_length, bos_idx, eos_idx, dev
         bos_idx: Beginning-of-sequence token index
         eos_idx: End-of-sequence token index
         device: Device to run on
+        repetition_penalty: Penalty factor for repeated tokens (default: 1.5)
+        repetition_window: Window size for tracking repetitions (default: 30)
 
     Returns:
         output: Decoded sequence [batch_size, out_len]
@@ -167,9 +173,10 @@ def greedy_decode_cached(model, src, src_mask, max_length, bos_idx, eos_idx, dev
             # This is essentially [1, 1, ..., 1] (all True) for the last position
             tgt_mask = torch.ones(batch_size, 1, 1, current_len, dtype=torch.bool, device=device)
 
-            # cross_mask: [batch, 1, 1, src_len] - attend to all source positions
-            cross_mask = (src != 0).unsqueeze(1).unsqueeze(2)  # Assume pad_idx=0
-            cross_mask = cross_mask.expand(batch_size, 1, 1, src_len)
+            # cross_mask: Create proper cross-attention mask [batch, 1, 1, src_len]
+            # For cached decoding, we only have 1 target position at a time
+            cross_mask = (src != 0).unsqueeze(1).unsqueeze(2)  # [batch, 1, 1, src_len]
+            # Note: Broadcasting handles the expansion to match target length of 1
 
             # Forward pass with caching
             logits, layer_caches = model.decode_incremental(
@@ -187,7 +194,7 @@ def greedy_decode_cached(model, src, src_mask, max_length, bos_idx, eos_idx, dev
 
             # Apply repetition penalty to discourage loops
             next_token_logits = apply_repetition_penalty(
-                next_token_logits, tgt, penalty=1.2, window_size=20
+                next_token_logits, tgt, penalty=repetition_penalty, window_size=repetition_window
             )
 
             next_token = next_token_logits.argmax(dim=-1)  # [batch_size]

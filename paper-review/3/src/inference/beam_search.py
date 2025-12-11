@@ -50,9 +50,12 @@ class Hypothesis:
 
 
 def beam_search(model, src, src_mask, beam_size, max_length, bos_idx, eos_idx,
-                length_penalty=0.6, device='cpu'):
+                length_penalty=0.6, repetition_penalty=1.5, repetition_window=30,
+                use_diverse_beam_search=False, num_beam_groups=1, diversity_penalty=0.5,
+                device='cpu'):
     """
     Beam search with length normalization and KV caching.
+    Supports diverse beam search (Vijayakumar et al., 2018) for better exploration.
 
     Args:
         model: Translation model
@@ -63,11 +66,21 @@ def beam_search(model, src, src_mask, beam_size, max_length, bos_idx, eos_idx,
         bos_idx: Beginning-of-sequence token index
         eos_idx: End-of-sequence token index
         length_penalty: Alpha parameter for length normalization (0.0 = no penalty, 0.6 = standard)
+        repetition_penalty: Penalty factor for repeated tokens (default: 1.5)
+        repetition_window: Window size for tracking repetitions (default: 30)
+        use_diverse_beam_search: Enable diverse beam groups (default: False)
+        num_beam_groups: Number of beam groups (must divide beam_size evenly, default: 1)
+        diversity_penalty: Penalty for selecting same token as previous groups (default: 0.5)
         device: Device to run on
 
     Returns:
         best_sequence: Best predicted sequence [1, seq_len]
     """
+    # Validate diverse beam search parameters
+    if use_diverse_beam_search:
+        assert beam_size % num_beam_groups == 0, \
+            f"beam_size ({beam_size}) must be divisible by num_beam_groups ({num_beam_groups})"
+        assert num_beam_groups > 1, "num_beam_groups must be > 1 for diverse beam search"
     model.eval()
 
     with torch.no_grad():
@@ -89,66 +102,105 @@ def beam_search(model, src, src_mask, beam_size, max_length, bos_idx, eos_idx,
         for step in range(max_length):
             candidates = []
 
-            # Expand each beam
-            for beam in beams:
-                if beam.finished:
-                    # Keep finished beams
-                    candidates.append(beam)
-                    continue
+            # Track tokens selected by each group (for diversity penalty)
+            if use_diverse_beam_search:
+                selected_tokens_by_group = []  # List of sets, one per group
 
-                # Prepare input (only last token for incremental decoding)
-                if beam.layer_caches is None:
-                    # First step: full sequence (just BOS)
-                    tgt_input = torch.tensor([beam.tokens], dtype=torch.long, device=device)
-                    current_len = len(beam.tokens)
-                else:
-                    # Subsequent steps: only last token
-                    tgt_input = torch.tensor([[beam.tokens[-1]]], dtype=torch.long, device=device)
-                    current_len = len(beam.tokens)
+            # Organize beams into groups for diverse beam search
+            if use_diverse_beam_search:
+                beams_per_group = beam_size // num_beam_groups
+                beam_groups = [beams[i:i+beams_per_group] for i in range(0, len(beams), beams_per_group)]
+                # Pad last group if needed
+                while len(beam_groups) < num_beam_groups:
+                    beam_groups.append([])
+            else:
+                beam_groups = [beams]  # Single group containing all beams
 
-                # Create masks
-                tgt_mask = torch.ones(1, 1, 1, current_len, dtype=torch.bool, device=device)
-                cross_mask = (src != 0).unsqueeze(1).unsqueeze(2).expand(1, 1, 1, src_len)
+            # Process each beam group
+            for group_idx, group_beams in enumerate(beam_groups):
+                group_candidates = []
+                group_selected_tokens = set()
 
-                # Forward pass with caching
-                logits, new_layer_caches = model.decode_incremental(
-                    tgt=tgt_input,
-                    encoder_output=encoder_output,
-                    cross_mask=cross_mask,
-                    tgt_mask=tgt_mask,
-                    layer_caches=beam.layer_caches,
-                    use_cache=True
-                )
+                # Expand each beam in this group
+                for beam in group_beams:
+                    if beam.finished:
+                        # Keep finished beams
+                        group_candidates.append(beam)
+                        continue
 
-                # Get log probabilities for next token
-                log_probs = F.log_softmax(logits[0, -1, :], dim=-1)  # [vocab_size]
+                    # Prepare input (only last token for incremental decoding)
+                    if beam.layer_caches is None:
+                        # First step: full sequence (just BOS)
+                        tgt_input = torch.tensor([beam.tokens], dtype=torch.long, device=device)
+                        current_len = len(beam.tokens)
+                    else:
+                        # Subsequent steps: only last token
+                        tgt_input = torch.tensor([[beam.tokens[-1]]], dtype=torch.long, device=device)
+                        current_len = len(beam.tokens)
 
-                # Apply repetition penalty to discourage loops
-                log_probs = apply_repetition_penalty_beam(
-                    log_probs, beam.tokens, penalty=1.2, window_size=20
-                )
+                    # Create masks
+                    tgt_mask = torch.ones(1, 1, 1, current_len, dtype=torch.bool, device=device)
+                    # cross_mask: [1, 1, 1, src_len] - broadcasting handles target length of 1
+                    cross_mask = (src != 0).unsqueeze(1).unsqueeze(2)  # [1, 1, 1, src_len]
 
-                # Get top-k tokens for this beam
-                topk_log_probs, topk_indices = torch.topk(log_probs, beam_size)
-
-                # Create new hypotheses
-                for log_prob, token_idx in zip(topk_log_probs, topk_indices):
-                    token = token_idx.item()
-                    new_score = beam.score + log_prob.item()
-                    new_tokens = beam.tokens + [token]
-                    is_finished = (token == eos_idx)
-
-                    new_hypothesis = Hypothesis(
-                        tokens=new_tokens,
-                        score=new_score,
-                        layer_caches=new_layer_caches,
-                        finished=is_finished
+                    # Forward pass with caching
+                    logits, new_layer_caches = model.decode_incremental(
+                        tgt=tgt_input,
+                        encoder_output=encoder_output,
+                        cross_mask=cross_mask,
+                        tgt_mask=tgt_mask,
+                        layer_caches=beam.layer_caches,
+                        use_cache=True
                     )
 
-                    if is_finished:
-                        completed_hypotheses.append(new_hypothesis)
-                    else:
-                        candidates.append(new_hypothesis)
+                    # Get log probabilities for next token
+                    log_probs = F.log_softmax(logits[0, -1, :], dim=-1)  # [vocab_size]
+
+                    # Apply repetition penalty to discourage loops
+                    log_probs = apply_repetition_penalty_beam(
+                        log_probs, beam.tokens, penalty=repetition_penalty, window_size=repetition_window
+                    )
+
+                    # Apply diversity penalty (for groups after the first)
+                    if use_diverse_beam_search and group_idx > 0:
+                        # Penalize tokens that were selected by previous groups
+                        for prev_group_tokens in selected_tokens_by_group:
+                            for token in prev_group_tokens:
+                                # Diversity penalty: score -= diversity_penalty
+                                log_probs[token] = log_probs[token] - diversity_penalty
+
+                    # Get top-k tokens for this beam
+                    beams_per_group = beam_size // num_beam_groups if use_diverse_beam_search else beam_size
+                    topk_log_probs, topk_indices = torch.topk(log_probs, beams_per_group)
+
+                    # Create new hypotheses
+                    for log_prob, token_idx in zip(topk_log_probs, topk_indices):
+                        token = token_idx.item()
+                        new_score = beam.score + log_prob.item()
+                        new_tokens = beam.tokens + [token]
+                        is_finished = (token == eos_idx)
+
+                        # Track selected token for diversity penalty
+                        group_selected_tokens.add(token)
+
+                        new_hypothesis = Hypothesis(
+                            tokens=new_tokens,
+                            score=new_score,
+                            layer_caches=new_layer_caches,
+                            finished=is_finished
+                        )
+
+                        if is_finished:
+                            completed_hypotheses.append(new_hypothesis)
+                        else:
+                            group_candidates.append(new_hypothesis)
+
+                # Store this group's selected tokens for diversity penalty
+                if use_diverse_beam_search:
+                    selected_tokens_by_group.append(group_selected_tokens)
+
+                # Add group candidates to overall candidates
+                candidates.extend(group_candidates)
 
             # If no active beams left, stop
             if not candidates:
