@@ -255,7 +255,7 @@ class Trainer:
             cross_input_mask = cross_mask[:, :, :-1, :]
 
             # Forward pass with mixed precision
-            with autocast(enabled=self.use_mixed_precision):
+            with torch.amp.autocast("cuda", enabled=self.use_mixed_precision):
                 logits = self.model(src, tgt_input, src_mask, tgt_input_mask, cross_input_mask)
 
                 # Reshape for loss computation
