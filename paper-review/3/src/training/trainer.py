@@ -88,7 +88,7 @@ class Trainer:
 
         # Mixed Precision Training
         self.use_mixed_precision = getattr(config, 'use_mixed_precision', False)
-        self.scaler = GradScaler() if self.use_mixed_precision else None
+        self.scaler = torch.amp.GradScaler("cuda") if self.use_mixed_precision else None
         if self.use_mixed_precision:
             print("✓ Mixed precision training enabled (AMP)")
 
