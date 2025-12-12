@@ -10,7 +10,7 @@ import time
 from collections import defaultdict
 
 from src.utils.checkpointing import save_checkpoint
-from src.utils.metrics import compute_bleu
+from src.utils.metrics import compute_bleu, compute_chrf, compute_metrics
 from src.inference.translator import Translator
 from src.utils.csv_logger import CSVLogger
 from src.utils.checkpoint_cleanup import cleanup_checkpoints, should_cleanup
@@ -223,18 +223,107 @@ class Trainer:
                     for detail in critical[:3]:  # Show first 3
                         print(f"      - {detail}")
 
+    def check_loss_validity(self, loss, step_info=""):
+        """
+        Check if loss is valid (not NaN or Inf).
+
+        Args:
+            loss: Loss tensor
+            step_info: String describing current step (for logging)
+
+        Returns:
+            is_valid: True if loss is valid
+        """
+        loss_value = loss.item()
+
+        if torch.isnan(loss).any():
+            print(f"\n{'='*80}")
+            print(f"⚠️  NaN LOSS DETECTED {step_info}")
+            print(f"{'='*80}")
+            print(f"Loss value: {loss_value}")
+            print(f"Skipping this update to prevent model corruption")
+            print(f"{'='*80}\n")
+            return False
+
+        if torch.isinf(loss).any():
+            print(f"\n{'='*80}")
+            print(f"⚠️  Inf LOSS DETECTED {step_info}")
+            print(f"{'='*80}")
+            print(f"Loss value: {loss_value}")
+            print(f"Skipping this update to prevent model corruption")
+            print(f"{'='*80}\n")
+            return False
+
+        return True
+
+    def check_gradients_validity(self):
+        """
+        Check if model gradients contain NaN or Inf.
+
+        Returns:
+            is_valid: True if all gradients are valid
+            stats: Dictionary with gradient validity statistics
+        """
+        nan_count = 0
+        inf_count = 0
+        nan_params = []
+        inf_params = []
+
+        for name, param in self.model.named_parameters():
+            if param.grad is not None:
+                if torch.isnan(param.grad).any():
+                    nan_count += 1
+                    nan_params.append(name)
+                if torch.isinf(param.grad).any():
+                    inf_count += 1
+                    inf_params.append(name)
+
+        stats = {
+            'nan_count': nan_count,
+            'inf_count': inf_count,
+            'nan_params': nan_params,
+            'inf_params': inf_params
+        }
+
+        is_valid = (nan_count == 0 and inf_count == 0)
+
+        if not is_valid:
+            print(f"\n{'='*80}")
+            print(f"⚠️  INVALID GRADIENTS DETECTED")
+            print(f"{'='*80}")
+            if nan_count > 0:
+                print(f"NaN gradients in {nan_count} parameters:")
+                for pname in nan_params[:5]:  # Show first 5
+                    print(f"  - {pname}")
+                if len(nan_params) > 5:
+                    print(f"  ... and {len(nan_params) - 5} more")
+            if inf_count > 0:
+                print(f"Inf gradients in {inf_count} parameters:")
+                for pname in inf_params[:5]:  # Show first 5
+                    print(f"  - {pname}")
+                if len(inf_params) > 5:
+                    print(f"  ... and {len(inf_params) - 5} more")
+            print(f"Skipping this update and zeroing gradients")
+            print(f"{'='*80}\n")
+
+        return is_valid, stats
+
     def train_epoch(self):
         """Train for one epoch with gradient accumulation support."""
         self.model.train()
         total_loss = 0
         total_grad_norm = 0
         num_batches = 0
+        num_skipped_batches = 0
 
         # Get gradient accumulation steps from config
         accumulation_steps = getattr(self.config, 'gradient_accumulation_steps', 1)
 
         # Zero gradients at start
         self.optimizer.zero_grad()
+
+        # Track accumulation separately from batch_idx
+        accumulation_counter = 0
 
         for batch_idx, batch in enumerate(tqdm(self.train_loader, desc="Training")):
             # Move batch to device
@@ -270,17 +359,44 @@ class Trainer:
                 # Scale loss by accumulation steps (important for correct gradient magnitude)
                 loss = loss / accumulation_steps
 
+            # Check loss validity before backward pass
+            step_info = f"(Epoch {self.current_epoch}, Batch {batch_idx+1}/{len(self.train_loader)})"
+            if not self.check_loss_validity(loss, step_info):
+                # Skip this batch - zero accumulated gradients and reset counter
+                self.optimizer.zero_grad()
+                accumulation_counter = 0
+                num_skipped_batches += 1
+                if self.use_mixed_precision:
+                    self.scaler.update()
+                continue
+
             # Backward pass (accumulate gradients) with gradient scaling
             if self.use_mixed_precision:
                 self.scaler.scale(loss).backward()
             else:
                 loss.backward()
 
+            # Increment accumulation counter
+            accumulation_counter += 1
+
             # Update weights every accumulation_steps batches
-            if (batch_idx + 1) % accumulation_steps == 0:
+            if accumulation_counter >= accumulation_steps:
                 if self.use_mixed_precision:
                     # Unscale gradients before clipping (required for AMP)
                     self.scaler.unscale_(self.optimizer)
+
+                # Check gradient validity before clipping
+                grads_valid, grad_validity_stats = self.check_gradients_validity()
+
+                if not grads_valid:
+                    # Skip this update - zero gradients and reset counter
+                    self.optimizer.zero_grad()
+                    accumulation_counter = 0
+                    num_skipped_batches += accumulation_steps
+                    # Update scaler state to prevent NaN propagation
+                    if self.use_mixed_precision:
+                        self.scaler.update()
+                    continue
 
                 # Gradient clipping and tracking
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
@@ -310,6 +426,7 @@ class Trainer:
 
                 # Zero gradients for next accumulation cycle
                 self.optimizer.zero_grad()
+                accumulation_counter = 0
 
                 self.global_step += 1
 
@@ -317,22 +434,31 @@ class Trainer:
             total_loss += loss.item() * accumulation_steps
             num_batches += 1
 
-        # Handle remaining gradients if batch count not divisible by accumulation_steps
-        if num_batches % accumulation_steps != 0:
+        # Handle remaining gradients if we have accumulated gradients that haven't been applied
+        if accumulation_counter > 0:
             if self.use_mixed_precision:
                 self.scaler.unscale_(self.optimizer)
 
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
-            total_grad_norm += grad_norm.item()
+            # Check gradient validity
+            grads_valid, _ = self.check_gradients_validity()
 
-            if self.use_mixed_precision:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+            if grads_valid:
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+                total_grad_norm += grad_norm.item()
+
+                if self.use_mixed_precision:
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    self.optimizer.step()
+
+                self.global_step += 1
             else:
-                self.optimizer.step()
+                # Skip update if gradients invalid
+                if self.use_mixed_precision:
+                    self.scaler.update()
 
             self.optimizer.zero_grad()
-            self.global_step += 1
 
         avg_loss = total_loss / num_batches
         # Divide by number of actual optimizer steps, not batches
@@ -371,21 +497,32 @@ class Trainer:
                 # Compute loss
                 loss = self.criterion(logits, targets)
 
+                # Check for NaN/Inf in validation loss
+                if torch.isnan(loss).any() or torch.isinf(loss).any():
+                    print(f"\n⚠️  Warning: NaN/Inf detected in validation loss!")
+                    print(f"This indicates model parameters have become corrupted.")
+                    print(f"Skipping this validation batch.")
+                    continue
+
                 total_loss += loss.item()
                 num_batches += 1
+
+        if num_batches == 0:
+            print("\n⚠️  Warning: All validation batches were skipped due to NaN/Inf!")
+            return float('nan')
 
         return total_loss / num_batches
 
     def compute_bleu_score(self, num_samples=None):
         """
-        Compute BLEU score on a subset of validation data.
+        Compute translation metrics on a subset of validation data.
 
         Args:
-            num_samples: Number of samples to use for BLEU computation.
+            num_samples: Number of samples to use for metric computation.
                         If None, uses config.bleu_num_samples
 
         Returns:
-            bleu_score: BLEU score (float)
+            metrics_dict: Dictionary with metric scores (bleu, chrf, etc.)
         """
         if not self.translator or not self.val_dataset:
             return None
@@ -400,11 +537,12 @@ class Trainer:
 
         predictions = []
         references = []
+        sources = []
 
-        print(f"  Computing BLEU on {num_samples} samples...")
+        print(f"  Computing metrics on {num_samples} samples...")
 
         with torch.no_grad():
-            for idx in tqdm(indices, desc="  BLEU", leave=False):
+            for idx in tqdm(indices, desc="  Metrics", leave=False):
                 # Get source and target texts
                 src_text = self.val_dataset.src_lines[idx].strip()
                 tgt_text = self.val_dataset.tgt_lines[idx].strip()
@@ -414,6 +552,7 @@ class Trainer:
                     pred_text = self.translator.translate(src_text, method='greedy')
                     predictions.append(pred_text)
                     references.append(tgt_text)
+                    sources.append(src_text)
                 except Exception as e:
                     # Skip if translation fails
                     continue
@@ -421,9 +560,16 @@ class Trainer:
         if not predictions:
             return None
 
-        # Compute BLEU
+        # Compute basic metrics (BLEU, chrF++)
         bleu = compute_bleu(predictions, references)
-        return bleu.score
+        chrf = compute_chrf(predictions, references)
+
+        metrics_dict = {
+            'bleu': bleu.score,
+            'chrf': chrf.score
+        }
+
+        return metrics_dict
 
     def generate_inference_examples(self, num_examples=None):
         """
@@ -491,12 +637,16 @@ class Trainer:
                 print(f"  Val Loss:   {val_loss:.4f} | Val PPL:   {val_ppl:.2f}")
                 print(f"  Learning Rate: {self.optimizer._get_lr():.6f}")
 
-                # Compute BLEU score
+                # Compute metrics
                 bleu_score = None
+                chrf_score = None
                 if self.translator:
-                    bleu_score = self.compute_bleu_score()
-                    if bleu_score is not None:
+                    metrics = self.compute_bleu_score()
+                    if metrics is not None:
+                        bleu_score = metrics['bleu']
+                        chrf_score = metrics['chrf']
                         print(f"  BLEU Score: {bleu_score:.2f}")
+                        print(f"  chrF++ Score: {chrf_score:.2f}")
 
                 # Generate inference examples
                 if self.translator:
@@ -559,7 +709,7 @@ class Trainer:
                 self.cumulative_time += epoch_time
 
                 # Log to CSV
-                metrics = {
+                log_metrics = {
                     'epoch': epoch + 1,
                     'global_step': self.global_step,
                     'train_loss': train_loss,
@@ -569,6 +719,7 @@ class Trainer:
                     'val_ppl': val_ppl,
                     'val_kl_div': val_loss,  # Loss is KL divergence
                     'val_bleu': bleu_score if bleu_score is not None else '',
+                    'val_chrf': chrf_score if chrf_score is not None else '',
                     'learning_rate': self.optimizer._get_lr(),
                     'grad_norm': train_grad_norm,
                     'best_train_loss': self.best_train_loss,
@@ -585,7 +736,7 @@ class Trainer:
                     'epoch_time_seconds': epoch_time,
                     'cumulative_time_seconds': self.cumulative_time,
                 }
-                self.csv_logger.log(metrics)
+                self.csv_logger.log(log_metrics)
 
             else:
                 # No validation this epoch
