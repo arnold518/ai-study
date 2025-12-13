@@ -41,17 +41,9 @@ def load_model_and_tokenizers(checkpoint_path, config, device='cuda'):
     # Create model
     print("Creating model...")
     model = Transformer(
+        config=config,
         src_vocab_size=src_tokenizer.vocab_size,
         tgt_vocab_size=tgt_tokenizer.vocab_size,
-        d_model=config.d_model,
-        num_heads=config.num_heads,
-        num_encoder_layers=config.num_encoder_layers,
-        num_decoder_layers=config.num_decoder_layers,
-        d_ff=config.d_ff,
-        max_seq_length=config.max_seq_length,
-        dropout=config.dropout,
-        tie_embeddings=config.tie_embeddings,
-        share_src_tgt_embed=config.share_src_tgt_embed,
     )
 
     # Load checkpoint
