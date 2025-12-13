@@ -50,7 +50,7 @@ class BaseConfig:
     inference_num_examples = 2  # Number of inference examples to display
 
     # Device
-    device = "cpu"
+    device = "cuda"
     num_workers = 8
 
     # Mixed Precision Training (Automatic Mixed Precision)
