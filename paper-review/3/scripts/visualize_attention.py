@@ -208,6 +208,7 @@ def main():
         return
 
     model, _, epoch, loss = load_checkpoint(model, None, args.checkpoint, device)
+    model.to(device)
     model.eval()
     print(f"Loaded checkpoint from epoch {epoch} (loss: {loss:.4f})")
     print()
