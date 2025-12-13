@@ -15,6 +15,21 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import argparse
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+# Configure matplotlib for Korean text display
+plt.rcParams['axes.unicode_minus'] = False  # Fix minus sign display
+# Try to use a Korean-compatible font if available
+try:
+    # Common Korean fonts on Linux systems
+    korean_fonts = ['NanumGothic', 'NanumBarunGothic', 'Malgun Gothic', 'DejaVu Sans']
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+    for font in korean_fonts:
+        if font in available_fonts:
+            plt.rcParams['font.family'] = font
+            break
+except:
+    pass  # Fall back to default font if configuration fails
 
 from config.transformer_config import TransformerConfig
 from src.data.tokenizer import SentencePieceTokenizer
