@@ -21,8 +21,8 @@ class TransformerConfig(BaseConfig):
     share_src_tgt_embed = False  # Separate embeddings for Korean-English (linguistically distant)
 
     # Training (from paper, adjusted for 897k dataset)
-    learning_rate = 1.0    # Factor in Noam schedule (reduced for mixed precision stability)
-    warmup_steps = 4000    # Paper default, appropriate for 897k dataset
+    learning_rate = 2.0    # Factor in Noam schedule (increased from 1.0 for higher peak LR)
+    warmup_steps = 8000    # Increased from 4000 for slower LR decay, longer learning
     adam_beta1 = 0.9
     adam_beta2 = 0.98
     adam_eps = 1e-9

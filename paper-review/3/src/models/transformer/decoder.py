@@ -37,6 +37,11 @@ class DecoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
 
+        # Store attention weights for visualization (set by external flag)
+        self.self_attn_weights = None
+        self.cross_attn_weights = None
+        self.store_attention = False  # Enable via set_store_attention()
+
     def forward(self, x, encoder_output, cross_mask=None, tgt_mask=None,
                 self_attn_cache=None, cross_attn_cache=None, use_cache=False):
         """
@@ -59,11 +64,13 @@ class DecoderLayer(nn.Module):
         # 1. Masked self-attention on target sequence
         # Q, K, V all come from target (x)
         # Shape: [batch_size, tgt_len, d_model]
-        attn_output, _, new_self_attn_cache = self.self_attn(
+        attn_output, self_attn, new_self_attn_cache = self.self_attn(
             x, x, x, tgt_mask,
             cache=self_attn_cache,
             use_cache=use_cache
         )
+        if self.store_attention:
+            self.self_attn_weights = self_attn  # Store for visualization
         attn_output = self.dropout1(attn_output)  # [batch_size, tgt_len, d_model]
         x = self.norm1(x + attn_output)           # [batch_size, tgt_len, d_model]
 
@@ -71,12 +78,14 @@ class DecoderLayer(nn.Module):
         # Q comes from decoder (x), K and V come from encoder
         # Note: We don't cache cross-attention K, V since encoder projections are fast
         # The real speedup comes from self-attention caching
-        cross_attn_output, _, _ = self.cross_attn(
+        cross_attn_output, cross_attn, _ = self.cross_attn(
             x, encoder_output, encoder_output,
             cross_mask,
             cache=None,
             use_cache=False
         )
+        if self.store_attention:
+            self.cross_attn_weights = cross_attn  # Store for visualization
         new_cross_attn_cache = None
         cross_attn_output = self.dropout2(cross_attn_output)  # [batch_size, tgt_len, d_model]
         x = self.norm2(x + cross_attn_output)                 # [batch_size, tgt_len, d_model]
@@ -90,6 +99,15 @@ class DecoderLayer(nn.Module):
         if use_cache:
             return x, new_self_attn_cache, new_cross_attn_cache
         return x, None, None
+
+    def set_store_attention(self, store=True):
+        """
+        Enable or disable attention weight storage for visualization.
+
+        Args:
+            store: If True, store attention weights during forward pass
+        """
+        self.store_attention = store
 
 
 class TransformerDecoder(nn.Module):
@@ -160,3 +178,13 @@ class TransformerDecoder(nn.Module):
         if use_cache:
             return x, new_layer_caches
         return x, None
+
+    def set_store_attention(self, store=True):
+        """
+        Enable or disable attention weight storage for all decoder layers.
+
+        Args:
+            store: If True, store attention weights during forward pass
+        """
+        for layer in self.layers:
+            layer.set_store_attention(store)

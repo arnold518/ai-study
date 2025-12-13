@@ -27,13 +27,13 @@ class BaseConfig:
     # Training
     batch_size = 128
     gradient_accumulation_steps = 2  # Effective batch size = 128 * 2 = 256
-    num_epochs = 30        # Reduced from 100 (4.1x more data = fewer epochs needed)
+    num_epochs = 50        # Increased from 30 - with better regularization, can train longer
     learning_rate = 1e-4   # Not used (Transformer uses Noam scheduler)
     grad_clip = 1.0
 
     # Regularization
-    dropout = 0.1          # Match paper (after fixing double dropout bug)
-    label_smoothing = 0.1
+    dropout = 0.3          # Increased from 0.1 - prevent overfitting on 897k dataset
+    label_smoothing = 0.05 # Reduced from 0.1 - less aggressive smoothing
 
     # Checkpointing
     save_every = 5
@@ -42,8 +42,8 @@ class BaseConfig:
     keep_n_recent_checkpoints = 3  # Number of periodic checkpoints to keep
 
     # Early Stopping (overfitting prevention)
-    early_stopping_patience = 8   # Stop if no improvement for N epochs
-    early_stopping_min_delta = 0.0001  # Minimum change to qualify as improvement
+    early_stopping_patience = 10     # Increased from 5 - with strong regularization, can be more patient
+    early_stopping_min_delta = 0.001 # Increased from 0.0001 - require larger improvement
 
     # Evaluation
     bleu_num_samples = 100  # Number of validation samples for BLEU computation

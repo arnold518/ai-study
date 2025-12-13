@@ -22,6 +22,7 @@ class NoamOptimizer:
             lr=0.0,
             betas=(0.9, 0.98),
             eps=1e-9,
+            weight_decay=1e-5,  # L2 regularization to prevent overfitting
         )
         self.d_model = d_model
         self.warmup_steps = warmup_steps
