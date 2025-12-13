@@ -184,7 +184,7 @@ $PYTHON scripts/evaluate.py --checkpoint checkpoints/checkpoint_epoch_10.pt
 $PYTHON scripts/evaluate.py --method beam --beam-size 5
 
 # Evaluate on subset for speed
-$PYTHON scripts/evaluate.py --num-samples 500
+$PYTHON scripts/evaluate.py --max-samples 500
 ```
 
 **Output:** Prints BLEU, chrF++ scores and translation examples

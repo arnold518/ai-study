@@ -21,7 +21,7 @@ from src.data.tokenizer import SentencePieceTokenizer
 from src.models.transformer.transformer import Transformer
 from src.utils.checkpointing import load_checkpoint
 from src.utils.visualization import AttentionVisualizer
-from src.utils.masking import create_padding_mask, create_causal_mask
+from src.utils.masking import create_padding_mask, create_look_ahead_mask
 
 
 def visualize_attention_for_sentence(
@@ -73,8 +73,8 @@ def visualize_attention_for_sentence(
         for _ in range(max_length):
             # Create target mask (causal + padding)
             tgt_len = tgt.size(1)
-            tgt_padding_mask = create_padding_mask(tgt, pad_idx=0)  # [1, 1, 1, tgt_len]
-            tgt_causal_mask = create_causal_mask(tgt_len, device=device)  # [1, 1, tgt_len, tgt_len]
+            tgt_padding_mask = create_padding_mask(tgt, pad_idx=0)  # [1, 1, tgt_len, tgt_len]
+            tgt_causal_mask = create_look_ahead_mask(tgt_len).unsqueeze(0).to(device)  # [1, 1, tgt_len, tgt_len]
             tgt_mask = tgt_padding_mask & tgt_causal_mask  # [1, 1, tgt_len, tgt_len]
 
             # Create cross-attention mask
