@@ -17,7 +17,11 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 
-# Configure matplotlib for Korean text display
+# Configure matplotlib for Korean text display and suppress warnings
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='seaborn')
+warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+
 plt.rcParams['axes.unicode_minus'] = False  # Fix minus sign display
 # Try to use a Korean-compatible font if available
 try:
