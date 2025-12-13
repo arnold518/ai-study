@@ -116,6 +116,17 @@ def visualize_attention_for_sentence(
     # Decode full translation
     translation = tgt_tokenizer.decode_ids(tgt[0].cpu().tolist())
 
+    # Run one final forward pass to get complete attention pattern
+    # (including the last generated token, which was appended but not processed)
+    final_tgt_len = tgt.size(1)
+    tgt_padding_mask = create_padding_mask(tgt, pad_idx=0)
+    tgt_causal_mask = create_look_ahead_mask(final_tgt_len).unsqueeze(0).to(device)
+    tgt_mask = tgt_padding_mask & tgt_causal_mask
+    cross_mask = create_cross_attention_mask(src, tgt, pad_idx=0)
+
+    # This forward pass stores the complete attention pattern
+    _ = model(src, tgt, src_mask, tgt_mask, cross_mask)
+
     # Get attention weights from specified layer
     decoder_layer = model.decoder.layers[layer_idx]
 
