@@ -62,8 +62,8 @@ def visualize_attention_for_sentence(
     src_mask = create_padding_mask(src, pad_idx=0)  # [1, 1, 1, src_len]
 
     # Start with BOS token
-    bos_id = tgt_tokenizer.bos_id()
-    eos_id = tgt_tokenizer.eos_id()
+    bos_id = tgt_tokenizer.bos_id
+    eos_id = tgt_tokenizer.eos_id
     tgt = torch.tensor([[bos_id]], dtype=torch.long).to(device)  # [1, 1]
 
     tgt_tokens = ['<s>']
