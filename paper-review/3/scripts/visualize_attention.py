@@ -21,7 +21,7 @@ from src.data.tokenizer import SentencePieceTokenizer
 from src.models.transformer.transformer import Transformer
 from src.utils.checkpointing import load_checkpoint
 from src.utils.visualization import AttentionVisualizer
-from src.utils.masking import create_padding_mask, create_look_ahead_mask
+from src.utils.masking import create_padding_mask, create_look_ahead_mask, create_cross_attention_mask
 
 
 def visualize_attention_for_sentence(
@@ -78,7 +78,7 @@ def visualize_attention_for_sentence(
             tgt_mask = tgt_padding_mask & tgt_causal_mask  # [1, 1, tgt_len, tgt_len]
 
             # Create cross-attention mask
-            cross_mask = src_mask  # [1, 1, 1, src_len] broadcasts to [1, 1, tgt_len, src_len]
+            cross_mask = create_cross_attention_mask(src, tgt, pad_idx=0)  # [1, 1, tgt_len, src_len]
 
             # Forward pass
             logits = model(src, tgt, src_mask, tgt_mask, cross_mask)  # [1, tgt_len, vocab]
