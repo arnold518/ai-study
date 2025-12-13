@@ -170,7 +170,7 @@ def main():
     # Resume from checkpoint if specified
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
-        epoch, loss = load_checkpoint(model, optimizer.optimizer, args.resume, device)
+        model, optimizer.optimizer, epoch, loss = load_checkpoint(model, optimizer.optimizer, args.resume, device)
         print()
 
     # Create checkpoint directory

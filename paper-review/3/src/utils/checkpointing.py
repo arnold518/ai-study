@@ -34,20 +34,26 @@ def load_checkpoint(model, optimizer, path, device):
 
     Args:
         model: Model to load weights into
-        optimizer: Optimizer to load state into
+        optimizer: Optimizer to load state into (can be None for inference)
         path: Path to checkpoint
         device: Device to load to
 
     Returns:
+        model: Model with loaded weights
+        optimizer: Optimizer with loaded state (if provided)
         epoch: Epoch number from checkpoint
         loss: Loss from checkpoint
     """
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
 
     model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    # Only load optimizer state if optimizer is provided
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
     epoch = checkpoint['epoch']
     loss = checkpoint['loss']
 
     print(f"Checkpoint loaded from {path} (epoch {epoch})")
-    return epoch, loss
+    return model, optimizer, epoch, loss
