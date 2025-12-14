@@ -21,17 +21,26 @@ import matplotlib.font_manager as fm
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='seaborn')
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+# Suppress font-related warnings specifically
+warnings.filterwarnings('ignore', message='.*Glyph.*missing from font.*')
 
 plt.rcParams['axes.unicode_minus'] = False  # Fix minus sign display
-# Try to use a Korean-compatible font if available
+# Configure font with fallback for better Unicode coverage
 try:
-    # Common Korean fonts on Linux systems
-    korean_fonts = ['NanumGothic', 'NanumBarunGothic', 'Malgun Gothic', 'DejaVu Sans']
+    # Use DejaVu Sans as primary (has better Unicode coverage including SentencePiece symbols)
+    # with Korean fonts as fallback for Korean characters
     available_fonts = [f.name for f in fm.fontManager.ttflist]
-    for font in korean_fonts:
-        if font in available_fonts:
-            plt.rcParams['font.family'] = font
-            break
+
+    # Prefer DejaVu Sans for its comprehensive Unicode support
+    if 'DejaVu Sans' in available_fonts:
+        plt.rcParams['font.family'] = ['DejaVu Sans', 'NanumGothic', 'NanumBarunGothic']
+    else:
+        # Fall back to any available Korean font
+        korean_fonts = ['NanumGothic', 'NanumBarunGothic', 'Malgun Gothic']
+        for font in korean_fonts:
+            if font in available_fonts:
+                plt.rcParams['font.family'] = font
+                break
 except:
     pass  # Fall back to default font if configuration fails
 
@@ -75,7 +84,16 @@ def visualize_attention_for_sentence(
     # Tokenize source
     src_tokens = src_tokenizer.tokenize(src_text)
     src_ids = src_tokenizer.encode_ids(src_text)
+
+    # CRITICAL: Add BOS and EOS tokens to match training format!
+    src_ids = [src_tokenizer.bos_id] + src_ids + [src_tokenizer.eos_id]
+    src_tokens = ['<s>'] + src_tokens + ['</s>']
+
     src = torch.tensor([src_ids], dtype=torch.long).to(device)  # [1, src_len]
+
+    # Debug: Print source info
+    print(f"  Source length: {len(src_ids)} tokens (including BOS/EOS)")
+    print(f"  First few tokens: {src_tokens[:5] if len(src_tokens) > 5 else src_tokens}")
 
     # Create source mask
     src_mask = create_padding_mask(src, pad_idx=0)  # [1, 1, 1, src_len]
@@ -119,6 +137,10 @@ def visualize_attention_for_sentence(
 
     # Decode full translation
     translation = tgt_tokenizer.decode_ids(tgt[0].cpu().tolist())
+
+    # Debug: Print generation info
+    print(f"  Generated {len(tgt_tokens)} tokens")
+    print(f"  Token IDs: {tgt[0].cpu().tolist()}")
 
     # Run one final forward pass to get complete attention pattern
     # (including the last generated token, which was appended but not processed)

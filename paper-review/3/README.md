@@ -256,22 +256,22 @@ Generate comprehensive training analysis report with visualizations.
 
 ```bash
 # Full analysis (plot + summary)
-$PYTHON tests/tool_analyze_training_log.py logs/training_log_20251213_015206.csv
+$PYTHON scripts/analyze_training_log.py logs/training_log_20251213_015206.csv
 
 # Custom output path
-$PYTHON tests/tool_analyze_training_log.py logs/training_log_*.csv \
+$PYTHON scripts/analyze_training_log.py logs/training_log_*.csv \
     --output reports/my_analysis.png
 
 # Plot only (no text summary)
-$PYTHON tests/tool_analyze_training_log.py logs/training_log_*.csv \
+$PYTHON scripts/analyze_training_log.py logs/training_log_*.csv \
     --format plot
 
 # Summary only (no plot)
-$PYTHON tests/tool_analyze_training_log.py logs/training_log_*.csv \
+$PYTHON scripts/analyze_training_log.py logs/training_log_*.csv \
     --format summary
 
 # Save summary to file
-$PYTHON tests/tool_analyze_training_log.py logs/training_log_*.csv \
+$PYTHON scripts/analyze_training_log.py logs/training_log_*.csv \
     --summary-file reports/training_summary.txt
 ```
 
